@@ -1,2 +1,2 @@
-# pptx2sent
-A simple, pptx to suckless sent converter written in C.
+# pptxt
+A simple, pptx to text (sent) converter written in C.
