@@ -7,6 +7,7 @@
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#include <ftw.h>
 
 #include "util.h"
 
@@ -68,8 +69,7 @@ rec_mkdir(char *path)
 		rec_mkdir(path);
 		*sep = '/';
 	}
-	if (mkdir(path, 0755) && errno != EEXIST)
-		printf("error while trying to create '%s'", path);
+	mkdir(path, 0755);
 }
 
 FILE *fopen_mkdir(char *path, char *mode) 
@@ -82,4 +82,19 @@ FILE *fopen_mkdir(char *path, char *mode)
 		free(path0);
 	}
 	return fopen(path, mode);
+}
+
+int unlink_cb(const char *fpath, const struct stat *sb, int typeflag, struct FTW *ftwbuf)
+{
+	    int rv = remove(fpath);
+
+		    if (rv)
+				        perror(fpath);
+
+						    return rv;
+}
+
+int rmrf(char *path)
+{
+	    return nftw(path, unlink_cb, 64, FTW_DEPTH | FTW_PHYS);
 }
