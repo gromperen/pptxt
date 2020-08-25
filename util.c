@@ -98,3 +98,12 @@ int rmrf(char *path)
 {
 	    return nftw(path, unlink_cb, 64, FTW_DEPTH | FTW_PHYS);
 }
+
+void *
+xrealloc(void *p, size_t len)
+{
+	if ((p = realloc(p, len)) == NULL) {
+		die("realloc: %s\n", strerror(errno));
+	}
+	return p;
+}

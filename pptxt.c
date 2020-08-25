@@ -6,41 +6,43 @@
 #include <libxml/parser.h>
 #include <math.h>
 #include <errno.h>
+#include <unistd.h>
 
 #include "util.h"
 
 #define LEN(a)		sizeof(a) / sizeof(a[0]) 
-#define TEMPFILE	"/tmp/pptxt/" 
+#define TEMPDIR	"/tmp/pptxt/" 
 
-void writetofile(char *out_file_path, char *data);
-int readzip(const char *path, char *filename);
-void parsexml(const char *path, FILE *outfile);
+void writetofile(char *out_file_path, unsigned char *data, int n);
+// int readzip(const char *path, char *filename, char *ext);
+void readzip(const char *path);
+void parseslidetext(const char *path, FILE *outfile);
 void usage();
 void cleanup();
 
 
 void
-writetofile(char *out_file_path, char *data)
+writetofile(char *out_file_path, unsigned char *data, int n)
 {
 	FILE *out_file;
-	out_file = fopen_mkdir(out_file_path, "w");
-	fprintf(out_file, "%s", data);
+	out_file = fopen_mkdir(out_file_path, "wb");
+	// ofprintf(out_file, "%u", data);
+	fwrite(data, sizeof(data[0]), n, out_file);
 	fclose(out_file);
 	return;
 }
 
-int
-readzip(const char *path, char *filename)
+void
+readzip(const char *path)
 {
 	struct zip *zf;
-	zip_file_t *file;
-	struct zip_stat st;
+	//struct zip_file *file;
 	int err = 0;
-	int size;
-	char *data;
-	char *tmpfilename;
-	int i = 1;
-	char *buffer;
+	unsigned char *data;
+	// char *tmpfilename;
+	int i = 0;
+	int num_entries;
+//	char *buffer;
 	char errorstr[100];
 
 	if ((zf = zip_open(path, 0, &err)) == NULL) {
@@ -48,67 +50,69 @@ readzip(const char *path, char *filename)
 		die("Unable to extract zip: %s: %s", path, errorstr);
 	}
 
-	while (1) {
-		tmpfilename = xmalloc(sizeof(filename) + (int)((ceil(log10(i))+1)*sizeof(char)) + sizeof(".xml"));
-		buffer = xmalloc((int)((ceil(log10(i))+1)*sizeof(char)));
-		strcpy(tmpfilename, filename);
 
-		sprintf(buffer, "%d", i);
-		strcat(tmpfilename, buffer);
-		strcat(tmpfilename, ".xml");
-		//strcat(tmpfilename, i);
-		file = zip_fopen(zf, tmpfilename, ZIP_FL_UNCHANGED);
+	num_entries = zip_get_num_entries(zf, ZIP_FL_UNCHANGED);
+	for (i = 0; i < num_entries; i++) {
+			const char *filename = zip_get_name(zf, i, ZIP_FL_ENC_GUESS);
+			struct zip_stat st;
+			zip_stat_init(&st);
+		  	zip_stat(zf, filename, 0, &st);
+			zip_file_t *file = zip_fopen(zf, filename, ZIP_FL_UNCHANGED);
 
-		if (file == NULL) {
-			free(tmpfilename);
-			free(buffer);
-			break;
-		}
+			if (file == NULL) {
+				fprintf(stderr, "couldnt extract file\n");
+				printf("coudlnt extarnct fiel \n");
+				zip_fclose(file);
+				continue;
+			}
 
-		
-		zip_stat(zf, tmpfilename, 0, &st);
-		size = st.size;
+			// data = ecalloc(sizeof(unsigned char), st.size + 10);
+			data = xmalloc(sizeof(unsigned char) * st.size + 10);
+			err = zip_fread(file, data, st.size);
+			zip_fclose(file);
+			if (err <= 0) {
+				printf("coudlnt read filei\n");
+				free(data);
+				continue;
+			}
+			data[st.size] = '\0';
 
-		data = ecalloc(sizeof(char), size + 10);
+			char tmpfilename[sizeof(TEMPDIR) + sizeof(st.name)];
+			sprintf(tmpfilename, "%s%s", TEMPDIR, st.name);
 
-		zip_fread(file, data, size);
+			writetofile(tmpfilename, data, st.size);
 
-		zip_fclose(file);
-
-		char outfile[sizeof(TEMPFILE) + sizeof(tmpfilename)];
-		sprintf(outfile, "%s%s", TEMPFILE, tmpfilename);
-
-		data[size] = '\0';
-		writetofile(outfile, data);
-
-		free(data);
-		free(tmpfilename);
-		i++;
-		free(buffer);
+			free(data);
+//			printf("%d / %d\n", i, num_entries - 1);
 	}
 
-	// zip_discard(zf);
+	printf("closing zip file\n");
 	err = zip_close(zf);
 
-	if (err != 0) {
-		die("Unable to close zip: %s", path);
-	}
+   if (err != 0) {
+   die("Unable to close zip: %s", path);
+   }
+	printf("done\n");
 
-	return i - 1;
+	return;
 }
 
 void
-parsexml(const char *path, FILE *outfile) 
+parseslidetext(const char *path, FILE *outfile) 
 {
 	// xmlDoc *document;
 	xmlDocPtr document;
 	xmlNode *root;
 	xmlNode *node[7];
 	xmlChar *text;
+	
+	if (access(path, R_OK) == -1) {
+		return;
+	}
 
 	document = xmlReadFile(path, NULL, 0);
 	if (document == NULL) {
-		die("Unable to read xml file");
+		return;
 	}
 
 	root = xmlDocGetRootElement(document);
@@ -120,6 +124,8 @@ parsexml(const char *path, FILE *outfile)
 	if (!xmlStrEqual(root->name, (const xmlChar *) "sld")) {
 		die("wrong xml format");
 	}
+
+
 	for (node[0] = root->children; node[0]; node[0] = node[0]->next) {
 		if (xmlStrEqual(node[0]->name, (const xmlChar *) "cSld")) {
 			for (node[1] = node[0]->children; node[1]; node[1] = node[1]->next) {
@@ -145,7 +151,6 @@ parsexml(const char *path, FILE *outfile)
 										}
 									}
 								}
-
 							}
 						}
 					}
@@ -154,22 +159,71 @@ parsexml(const char *path, FILE *outfile)
 		}
 		break;
 	}
+	fprintf(outfile, "\n");
 
 	xmlFreeDoc(document);
 	xmlCleanupParser();
 	return;
 }
 
+
+void
+parseslideimages(const char *path, FILE *outfile) 
+{
+	// xmlDoc *document;
+	xmlDocPtr document;
+	xmlNode *root;
+	xmlNode *node;
+	xmlChar *text;
+	
+	if (access(path, R_OK) == -1) {
+		return;
+	}
+
+	document = xmlReadFile(path, NULL, 0);
+	if (document == NULL) {
+		return;
+	}
+
+	root = xmlDocGetRootElement(document);
+
+	if (root == NULL) {
+		die("No root in xml file");
+	}
+
+	if (!xmlStrEqual(root->name, (const xmlChar *) "Relationships")) {
+		die("wrong xml format");
+	}
+
+
+	for (node = root->children; node; node = node->next) {
+		if (xmlStrEqual(node->name, (const xmlChar *) "Relationship")) {
+			text = xmlGetProp(node, (const xmlChar *) "Target");
+			if (strstr((const char *) text, "media")) {
+				fprintf(outfile, "\n@/tmp/pptxt/ppt/slides/%s\n", text);
+				// printf("Target: %s\n", text);
+			}
+			xmlFree(text);
+		}
+	}
+	fprintf(outfile, "\n");
+
+	xmlFreeDoc(document);
+	xmlCleanupParser();
+	return;
+}
+
+
 void
 cleanup()
 {
-	rmrf(TEMPFILE);
+	rmrf(TEMPDIR);
 }
 
 void
 usage()
 {
-	die("usage: pptxt infile [-o outfile]");
+	die("usage: pptxt infile [-o outfile] [-c / --clean]");
 	return;
 }
 
@@ -179,16 +233,15 @@ main(int argc, char *argv[])
 	FILE *outfile = NULL;
 	char *outfilename = "out.txt";
 	char *infilename = "";
-	int n;
+	int i = 1;
 	char *tmpfilename;
 
 	if (argc < 2) {
 		usage();
 	}
-	infilename = argv[1];
-	for (int i = 2; i < argc; i++) {
+	for (int i = 1; i < argc; i++) {
 		if (!strcmp(argv[i], "-v")) {
-			puts("doctxt-"VERSION);
+			printf("pptxt-0.1\n");
 			return 0;
 		} else if (!strcmp(argv[i], "-o")) {
 			if (argc <= i - 1) {
@@ -196,29 +249,43 @@ main(int argc, char *argv[])
 			}
 			outfilename = argv[i + 1];
 			i++;
-		}
-		else {
-			usage();
+		} else if (!strcmp(argv[i], "-c") || !strcmp(argv[i], "--clean")) {
+			printf("cleaning up\n");
+			cleanup();
+			return 0;
+		} else {
+			if (i == 1) {
+				infilename = argv[1];
+			} else {
+				usage();
+			}
 		}
 	}
 
-	safe_create_dir(TEMPFILE);
-	n = readzip(infilename, "ppt/slides/slide");
+	safe_create_dir(TEMPDIR);
+	readzip(infilename);
 	// printf("finished extracting zip\n");
 	outfile = fopen(outfilename, "wt");
 
-	for (int i = 1; i <= n; i++) {
+	while (1) {
 		tmpfilename = xmalloc(sizeof("/tmp/pptxt/ppt/slides/slide") + (int)((ceil(log10(i))+1)*sizeof(char)) + sizeof(".xml"));
 
 		sprintf(tmpfilename, "/tmp/pptxt/ppt/slides/slide%d.xml", i);
 
-		parsexml(tmpfilename, outfile);
+		if (access(tmpfilename, R_OK) == -1) {
+			break;
+		}
+
+		fprintf(outfile, "# Slide %d\n", i);
+		parseslidetext(tmpfilename, outfile);
+		tmpfilename = xrealloc(tmpfilename, sizeof("/tmp/pptxt/ppt/slides/_rels/slide") + (int)((ceil(log10(i))+1)*sizeof(char)) + sizeof(".xml.rels"));
+		sprintf(tmpfilename, "/tmp/pptxt/ppt/slides/_rels/slide%d.xml.rels", i);
+		parseslideimages(tmpfilename, outfile);
+
 		free(tmpfilename);
+		i++;
 	}
 	fclose(outfile);
-
-	cleanup();
-
 
 	return 0;
 

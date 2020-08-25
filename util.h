@@ -12,3 +12,4 @@ void rec_mkdir(char *path);
 FILE *fopen_mkdir(char *path, char *mode);
 //int unlink_cb(const char *fpath, const struct stat *sb, int typeflag, struct FTW *ftwbuf);
 int rmrf(char *path);
+void *xrealloc(void *p, size_t len);
